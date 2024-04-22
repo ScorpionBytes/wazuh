@@ -96,8 +96,8 @@ get_package_and_checksum(){
     fi
 
     if [[ "${src}" == "yes" ]]; then
-        mv ${rpm_build_dir}/SRPMS/$SRC_NAME /var/local/wazuh
+        mv ${rpm_build_dir}/SRPMS/wazuh-agent-4.9.0-0.x86_64.rpm /var/local/wazuh
     else
-        mv ${rpm_build_dir}/RPMS/$RPM_NAME /var/local/wazuh
+        mv ${rpm_build_dir}/RPMS/wazuh-agent-4.9.0-0.x86_64.rpm /var/local/wazuh
     fi
 }
