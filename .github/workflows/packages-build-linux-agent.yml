@@ -58,9 +58,6 @@ on:
           Default is 'false'.
         required: false
 
-  pull_request:
-    types: [opened, synchronize, reopened]
-
   workflow_call:
     inputs:
       docker_image_tag:
@@ -92,7 +89,7 @@ on:
 jobs:
   Build-agent-linux-packages:
     runs-on: ubuntu-latest
-    name: Test build Wazuh Agent packages
+    name: Build ${{ inputs.system }} wazuh-agent on ${{ inputs.architecture }} ${{ inputs.legacy && '- legacy' || '' }} ${{ inputs.is_stage && '- is stage' || '' }}
 
     steps:
       - name: Cancel previous runs
@@ -106,19 +103,38 @@ jobs:
 
       - name: Set ARCH
         run: |
-          echo "ARCH=amd64" >> $GITHUB_ENV;
+          if [ ${{ inputs.system }} == 'rpm' ]; then
+            if [ "${{ inputs.architecture }}" = "armv7hl" ]; then
+                arch="armhf"
+            elif [ "${{ inputs.architecture }}" = "aarch64" ]; then
+                arch="arm64"
+            elif [ "${{ inputs.architecture }}" = "x86_64" ]; then
+                arch="amd64"
+            else
+                arch=${{ inputs.architecture }}
+            fi
+          else
+            arch=${{ inputs.architecture }}
+          fi
+          echo "ARCH=$arch" >> $GITHUB_ENV;
 
       - name: Set TAG and CONTAINER_NAME
         run: |
           VERSION=$(sed 's/^v\([0-9]*\.[0-9]*\.[0-9]*\)/\1/' $GITHUB_WORKSPACE/src/VERSION)
-          echo "TAG=$VERSION" >> $GITHUB_ENV;
-          echo "CONTAINER_NAME=pkg_rpm_agent_builder_${{ env.ARCH }}" >> $GITHUB_ENV
+          if [ "${{ inputs.docker_image_tag }}" == "auto" ]; then echo "TAG=$VERSION" >> $GITHUB_ENV;
+          elif [ "${{ inputs.docker_image_tag }}" == "developer" ]; then echo "TAG=${{ github.ref_name }}" >> $GITHUB_ENV;
+          else echo "TAG=${{ inputs.docker_image_tag }}" >> $GITHUB_ENV; fi
+          if [ "${{ inputs.legacy }}" == "true" ]; then
+            echo "CONTAINER_NAME=pkg_${{ inputs.system }}_legacy_builder_${{ env.ARCH }}" >> $GITHUB_ENV
+          else
+            echo "CONTAINER_NAME=pkg_${{ inputs.system }}_agent_builder_${{ env.ARCH }}" >> $GITHUB_ENV
+          fi
 
       - name: Download docker image for package building
         run: |
           bash $GITHUB_WORKSPACE/.github/actions/ghcr-pull-and-push/pull_image_from_ghcr.sh ${{ secrets.GITHUB_TOKEN }} ${{ github.actor}} $CONTAINER_NAME ${{ env.TAG }}
 
-      - name: Build rpm wazuh-agent on ${{ env.ARCH }}
+      - name: Build ${{ inputs.system }} wazuh-agent on ${{ env.ARCH }}
         working-directory: packages
         run: |
           REVISION=${{ inputs.revision }}
@@ -128,12 +144,12 @@ jobs:
           if [ "${{ inputs.legacy }}" == "true" ]; then FLAGS+="--legacy "; fi
           if [ "${{ inputs.checksum }}" == "true" ] && [ ${{ inputs.is_stage}} == "true" ]; then FLAGS+="--checksum "; fi
           if [ "${{ inputs.debug}}" == "true" ]; then FLAGS+="--debug "; fi
-          echo "generate_package.sh -a ${{ env.ARCH }} --tag ${{ env.TAG }} --system rpm $FLAGS"
-          bash generate_package.sh -a ${{ env.ARCH }} --tag ${{ env.TAG }} --system rpm $FLAGS
+          echo "generate_package.sh -a ${{ env.ARCH }} --tag ${{ env.TAG }} --system ${{ inputs.system }} $FLAGS"
+          bash generate_package.sh -a ${{ env.ARCH }} --tag ${{ env.TAG }} --system ${{ inputs.system }} $FLAGS
 
       - name: Set PACKAGE_NAME
         run: |
-          package_name=$(find /tmp -maxdepth 1 -type f -name "*agent*.rpm" -exec basename {} 2>/dev/null \;)
+          package_name=$(find /tmp -maxdepth 1 -type f -name "*agent*.${{ inputs.system }}" -exec basename {} 2>/dev/null \;)
           if [ -z "$package_name" ]; then echo "No package found matching the pattern!"; exit 1; fi
           echo "PACKAGE_NAME=$package_name" >> $GITHUB_ENV
 
@@ -154,7 +170,7 @@ jobs:
           if [ "${{ inputs.is_stage }}" == "true" ]; then
             curl -O https://raw.githubusercontent.com/wazuh/wazuh/${{ github.event.inputs.linux_reference }}/src/VERSION
             echo "VERSION=$(sed 's/.*\([0-9]\.[0-9]*\.[0-9]*\).*/\1/' $GITHUB_WORKSPACE/VERSION)" >> $GITHUB_ENV;
-            echo "WPK_NAME=wazuh_agent_v${{ env.VERSION }}_linux_${{ env.ARCH }}.rpm.wpk" >> $GITHUB_ENV;
+            echo "WPK_NAME=wazuh_agent_v${{ env.VERSION }}_linux_${{ env.ARCH }}.${{ inputs.system }}.wpk" >> $GITHUB_ENV;
           else
             echo "WPK_NAME=${{ env.PACKAGE_NAME }}.wpk" >> $GITHUB_ENV
           fi
@@ -167,7 +183,7 @@ jobs:
             WPK_PRIVATE_KEY,${{ secrets.CI_AWS_WPK_PRIVATE_KEY_SECRET_NAME }}
             WPK_CERT,${{ secrets.CI_AWS_WPK_CERT_SECRET_NAME }}
 
-      - name: Generate WPK rpm package for wazuh-agent on ${{ env.ARCH }}
+      - name: Generate WPK ${{ inputs.system }} package for wazuh-agent on ${{ env.ARCH }}
         if: github.event.inputs.linux_reference != ''
         working-directory: packages/wpk
         run: |
